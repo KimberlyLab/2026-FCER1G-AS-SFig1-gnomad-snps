@@ -47,3 +47,14 @@ po/*~
 
 # RStudio Connect folder
 rsconnect/
+
+# R default figure filename
+Rplot.pdf
+Rplot.png
+
+# interactive plotly files (big)
+*.html
+
+# Mac OSX
+.DS_Store
+
