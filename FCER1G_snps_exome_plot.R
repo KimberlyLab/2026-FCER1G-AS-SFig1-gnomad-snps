@@ -6,6 +6,7 @@
 library(readxl)    # read_xlsx
 library(dplyr)     # data manipulation
 library(ggplot2)   # plotting
+library(scales)    # For trans_breaks, trans_format (log plot bg)
 library(biomaRt)   # Ensembl exon coordinates
 library(plotly)    # interactive plot
 library(htmlwidgets) # saveWidget
@@ -17,19 +18,32 @@ library(ggrepel)   # for non-overlapping text labels
 gnomad_file <- "gnomad.FCER1G_canonical_1perc_snps.xlsx"
 
 # Output files
-pdf_out    <- "FCER1G_Gnomad_variants.pdf"
-png_out    <- "FCER1G_Gnomad_variants.png"
+pdf_out    <- "figure/FCER1G_Gnomad_variants.debug_txn.pdf"
+png_out    <- "figure/FCER1G_Gnomad_variants.debug_txn.png"
+pdf_noex_out    <- "figure/FCER1G_Gnomad_variants.no_txn.pdf"
+png_noex_out    <- "figure/FCER1G_Gnomad_variants.no_txn.png"
+
 html_out   <- "FCER1G_Gnomad_variants_plotly.html"
 
 # Transcripts of interest (without version numbers for Ensembl)
 tx_ids <- c("ENST00000289902", "ENST00000367992")
 
-## -------- Get exon layout from Ensembl --------
-## If your gnomAD data is GRCh37, set GRCh = 37 instead.
+# Ensembl version
+ensembl_ver = 115
+
+# list latest Ensembl verison
+bm_info = listEnsembl(GRCh = 38)
+print(paste("Latest Ensembl Release:",listEnsembl(GRCh = 38)[bm_info$biomart == "genes", "version"]))
+print(paste("Using Ensembl Release: ",listEnsembl(GRCh = 38, version=ensembl_ver)[bm_info$biomart == "genes", "version"]))
+
+## -------- Get exon/transcript layout from Ensembl --------
+
+
 ensembl <- useEnsembl(
   biomart = "genes",
   dataset = "hsapiens_gene_ensembl",
-  GRCh    = 38   # change to 37 if needed
+  version = ensembl_ver
+  #GRCh    = 38,   # change to 37 if needed, else defaults to 38
 )
 
 exons <- getBM(
@@ -45,14 +59,41 @@ exons <- getBM(
   mart     = ensembl
 )
 
-# Map transcripts to human-readable isoform names
+tx_info <- getBM(
+  attributes = c(
+    "ensembl_transcript_id",
+    "ensembl_transcript_id_version",
+    "ensembl_gene_id",
+    "hgnc_symbol"
+  ),
+  filters  = "ensembl_transcript_id",
+  values   = tx_ids,
+  mart     = ensembl
+)
+
 exons <- exons %>%
-  mutate(
-    isoform = case_when(
-      ensembl_transcript_id == "ENST00000289902" ~ "WT-Gamma (ENST00000289902.2)",
-      ensembl_transcript_id == "ENST00000367992" ~ "AS-Gamma (ENST00000367992.7)",
-      TRUE ~ ensembl_transcript_id
-    )
+  left_join(tx_info, by = "ensembl_transcript_id")
+
+# 1) Pull unique transcript/version pairs
+tx_versions <- exons %>%
+  distinct(ensembl_transcript_id, ensembl_transcript_id_version)
+
+# 2) Define human-readable names
+tx_labels <- tibble::tibble(
+  ensembl_transcript_id = c("ENST00000289902", "ENST00000367992"),
+  base_label            = c("WT-Gamma",        "AS-Gamma")
+)
+
+# 3) Join and build final label: "WT-Gamma (ENST00000289902.2)"
+tx_labels <- tx_labels %>%
+  left_join(tx_versions, by = "ensembl_transcript_id") %>%
+  mutate(isoform = paste0(base_label, " (", ensembl_transcript_id_version, ")"))
+
+# 4) Attach back to exon data
+exons <- exons %>%
+  left_join(
+    tx_labels %>% select(ensembl_transcript_id, isoform),
+    by = "ensembl_transcript_id"
   )
 
 # Create y-bands for the two isoform exon tracks BELOW the variant points
@@ -69,7 +110,11 @@ chr_fcer1g   <- unique(exons$chromosome_name)
 region_start <- min(exons$exon_chrom_start)
 region_end   <- max(exons$exon_chrom_end)
 
-## -------- Read gnomAD variant data --------
+## -------- Read gnomAD variant data from earlier XLSX dump  --------
+##
+## would be nicer to read this directly from Gnomad
+## Mais, j'ai des autres chats a fouetter.
+##
 gnomad_raw <- read_xlsx(gnomad_file)
 
 src_cols = c(
@@ -115,8 +160,10 @@ gnomad <- gnomad %>%
 # Filter out very rare variants
 gnomad_region <- gnomad %>%
   filter(
-    af > 0.005,
-    !(annotation %in% c("intron_variant", "non_coding_transcript_exon_variant"))
+    af > 0.001,
+    !(annotation %in% c("intron_variant", 
+                        "non_coding_transcript_exon_variant",
+                        "3_prime_UTR_variant"))
   )
 
 ## Safety check in case filtering nukes everything
@@ -125,7 +172,13 @@ if (nrow(gnomad_region) == 0) {
   gnomad_region <- gnomad
 }
 
-## -------- Build ggplot --------
+## ==============================================================
+## ==                     Build ggplots                       ==
+## ==============================================================
+
+# ---------------------------------------------------------------
+# internal usage plot to show exons and variants on genomic scale
+# ---------------------------------------------------------------
 
 min_y_exon <- min(exons$ymin)
 max_y_var  <- max(gnomad_region$af, na.rm = TRUE)
@@ -159,7 +212,8 @@ p <- ggplot() +
     alpha = 0.8
   ) +
   geom_text_repel(
-    data = subset(gnomad_region, af > 0.01),
+#    data = subset(gnomad_region, af > 0.01),
+    data = gnomad_region,
     aes(
       x     = pos,
       y     = af,
@@ -204,3 +258,115 @@ saveWidget(
 
 p_plotly
 p
+
+# ---------------------------------------------------------------
+# ACTUAL FIGURE plot just variants on, still on a genomic scale
+# 
+# this will be labeled and combined with isoform diagram in pptx.
+# ---------------------------------------------------------------
+
+p2 <-
+  ggplot() +
+  # ## Exon rectangles
+  # geom_rect(
+  #   data = exons,
+  #   aes(
+  #     xmin = exon_chrom_start,
+  #     xmax = exon_chrom_end,
+  #     ymin = ymin,
+  #     ymax = ymax,
+  #     fill = isoform
+  #   ),
+  #   color = "black",
+  #   alpha = 0.8
+  # ) +
+  ## Variant points
+  geom_point(
+    data = gnomad_region,
+    aes(
+      x     = pos,
+      y     = af,
+      #color = "black",
+      annotation = annotation,
+      protein_cons = protein_cons
+    ),
+    size  = 5,
+    alpha = 0.8
+  ) +
+  geom_text_repel(
+#    data = subset(gnomad_region, af > 0.01),
+    data = gnomad_region,
+    aes(
+      x     = pos,
+      y     = af,
+      label = protein_cons
+      #color = annotation
+    ),
+    size = 5,
+    max.overlaps = Inf,
+    min.segment.length = 0,
+    nudge_y      = 0.3,
+    box.padding = 0.5,
+    point.padding = 0.4,
+    force = 5
+  ) +
+#  scale_y_continuous(
+#    name   = "Allele frequency (gnomAD)",
+#    limits = c(min_y_exon, y_upper),
+#    expand = c(0, 0)
+#  ) +
+#  scale_y_log10(
+#    name = " gnomAD Allele frequency (log10)",
+#    limits = c(0.001, 1.0),
+#  ) +
+  scale_y_continuous(trans='log10',
+                     breaks = c(0.001,0.0025,0.005,0.0075,0.01,0.025,0.05,0.075,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0), # Major ticks
+                     labels = c(0.001,"",    "",   "",    0.01,"",   "",  "",   0.1, "", "", "",0.5, "", "", "","", 1.0),
+                     name = " gnomAD Allele frequency (log10)",
+                     minor_breaks = NULL, # remove minor
+                     limits = c(0.001,1.0)
+                      ) + # Format labels
+  theme(panel.grid.major.y = element_line(color="black"), # Log-spaced major grid
+        panel.grid.minor.y = element_line(color="gray95", linetype="dotted") # Minor log grid
+  ) +
+  labs(
+    x     = "Genomic position (bp)",
+    title = "Gnomad variants FCER1G"
+  ) +
+  theme_bw() +
+  theme(
+    plot.title   = element_text(hjust = 0.5),
+    legend.title = element_blank(),
+    axis.title   = element_text(size = 24),
+    axis.title.y = element_text(size = 24, margin = margin(r = 25)),
+    axis.text    = element_text(size = 24),
+   ) + 
+  # hide some things
+  theme(legend.position = "none") +
+  theme(
+    plot.title   = element_blank(),
+    axis.title.x = element_blank(),
+    axis.text.x  = element_blank()
+  ) + 
+  theme(
+    axis.ticks.y.minor = element_blank(),
+    axis.ticks.x       = element_blank()
+  ) + theme(
+    panel.grid.major.x = element_blank(),
+    panel.grid.minor.x = element_blank()
+  )
+p2
+
+## -------- Save PDF --------
+ggsave(pdf_noex_out, plot = p2, width = 10, height = 5)
+ggsave(png_noex_out, plot = p2, width = 10, height = 5)
+
+## -------- Make Plotly interactive plot --------
+
+p_plotly <- ggplotly(p2, tooltip = c("x", "y", "annotation","protein_cons"))
+saveWidget(
+  widget = p_plotly,
+  file   = html_out,
+  selfcontained = TRUE
+)
+
