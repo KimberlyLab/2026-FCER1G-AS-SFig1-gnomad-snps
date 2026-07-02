@@ -16,9 +16,10 @@ library(ggrepel)   # for non-overlapping text labels
 ## -------- Parameters --------
 
 # Input gnomAD file (edit path if needed)
-gnomad_file <- "gnomad.FCER1G_canonical_1perc_snps.xlsx"
+gnomad_file <- "gnomad.FCER1G_variants.xlsx"
 gnomad_file <- "gnomAD_v4.1.1_ENSG00000158869_2026_07_01_20_18_59.genome.csv"
-gnomad_file <- "gnomAD_v4.1.1_ENSG00000158869_2026_07_01_20_18_59.genome.csv"
+gnomad_file <- "gnomAD_v4.1.1_ENSG00000158869_2026_07_01_21_27_57.exome-genome.csv"
+
 
 # Output files
 pdf_out    <- "figure/FCER1G_Gnomad_variants.debug_txn.pdf"
