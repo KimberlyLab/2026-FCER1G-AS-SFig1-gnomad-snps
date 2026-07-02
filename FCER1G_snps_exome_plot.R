@@ -4,6 +4,7 @@
 
 ## Load required packages
 library(readxl)    # read_xlsx
+library(readr)     # read_csv
 library(dplyr)     # data manipulation
 library(ggplot2)   # plotting
 library(scales)    # For trans_breaks, trans_format (log plot bg)
@@ -16,6 +17,8 @@ library(ggrepel)   # for non-overlapping text labels
 
 # Input gnomAD file (edit path if needed)
 gnomad_file <- "gnomad.FCER1G_canonical_1perc_snps.xlsx"
+gnomad_file <- "gnomAD_v4.1.1_ENSG00000158869_2026_07_01_20_18_59.genome.csv"
+gnomad_file <- "gnomAD_v4.1.1_ENSG00000158869_2026_07_01_20_18_59.genome.csv"
 
 # Output files
 pdf_out    <- "figure/FCER1G_Gnomad_variants.debug_txn.pdf"
@@ -34,7 +37,7 @@ ensembl_ver = 115
 # list latest Ensembl verison
 bm_info = listEnsembl(GRCh = 38)
 print(paste("Latest Ensembl Release:",listEnsembl(GRCh = 38)[bm_info$biomart == "genes", "version"]))
-print(paste("Using Ensembl Release: ",listEnsembl(GRCh = 38, version=ensembl_ver)[bm_info$biomart == "genes", "version"]))
+print(paste("Using Ensembl Release: ",listEnsembl(version=ensembl_ver)[bm_info$biomart == "genes", "version"]))
 
 ## -------- Get exon/transcript layout from Ensembl --------
 
@@ -115,7 +118,14 @@ region_end   <- max(exons$exon_chrom_end)
 ## would be nicer to read this directly from Gnomad
 ## Mais, j'ai des autres chats a fouetter.
 ##
-gnomad_raw <- read_xlsx(gnomad_file)
+ext <- tolower(tools::file_ext(gnomad_file))
+
+gnomad_raw <- switch(
+  ext,
+  csv  = read_csv(gnomad_file, show_col_types = FALSE),
+  xlsx = read_xlsx(gnomad_file),
+  stop("Unsupported file extension: ", ext)
+)
 
 src_cols = c(
   'chr'        = 'Chromosome',
@@ -154,13 +164,13 @@ gnomad_region <- gnomad %>%
 gnomad <- gnomad %>%
   mutate(
     af_orig = af,
-    af = if_else(af > 0.5, 1.0 - af, af)
+    af = if_else(af > 0.3, 1.0 - af, af)
   )
 
 # Filter out very rare variants
 gnomad_region <- gnomad %>%
   filter(
-    af > 0.001,
+    af > 8.0e-04,
     !(annotation %in% c("intron_variant", 
                         "non_coding_transcript_exon_variant",
                         "3_prime_UTR_variant"))
