@@ -12,6 +12,7 @@ library(biomaRt)   # Ensembl exon coordinates
 library(plotly)    # interactive plot
 library(htmlwidgets) # saveWidget
 library(ggrepel)   # for non-overlapping text labels
+library(stringr)   # regex string manipulations for labels
 
 ## -------- Parameters --------
 
@@ -171,7 +172,7 @@ gnomad <- gnomad %>%
 # Filter out very rare variants
 gnomad_region <- gnomad %>%
   filter(
-    af > 8.0e-04,
+    af > 5.0e-04,
     !(annotation %in% c("intron_variant", 
                         "non_coding_transcript_exon_variant",
                         "3_prime_UTR_variant"))
@@ -276,6 +277,17 @@ p
 # this will be labeled and combined with isoform diagram in pptx.
 # ---------------------------------------------------------------
 
+# format labels - bold/underline the AA that is the most common
+# (some of these SNPs have AF > 0.5, and we plot them as (1.0-AF))
+hgvs_parse <- str_match(gnomad_region$`HGVS Consequence`,
+               "^p\\.([A-Za-z]{3})([0-9]+)([A-Za-z]{3})$")
+
+gnomad_region$protein_cons <- ifelse(
+  gnomad_region$af_orig <= 0.5,
+  sprintf('paste("p.",underline(bold("%s")),"%s%s")', hgvs_parse[, 2], hgvs_parse[, 3], hgvs_parse[, 4]),
+  sprintf('paste("p.%s%s",underline(bold("%s")))', hgvs_parse[, 2], hgvs_parse[, 3], hgvs_parse[, 4])
+)
+
 p2 <-
   ggplot() +
   # ## Exon rectangles
@@ -319,7 +331,8 @@ p2 <-
     nudge_y      = 0.3,
     box.padding = 0.5,
     point.padding = 0.4,
-    force = 5
+    force = 5,
+    parse = TRUE
   ) +
 #  scale_y_continuous(
 #    name   = "Allele frequency (gnomAD)",
@@ -331,10 +344,16 @@ p2 <-
 #    limits = c(0.001, 1.0),
 #  ) +
   scale_y_continuous(trans='log10',
-                     breaks = c(0.001,0.0025,0.005,0.0075,0.01,0.025,0.05,0.075,0.1,0.2,0.3,0.4,0.5,0.6,0.7,0.8,0.9,1.0), # Major ticks
-                     labels = c(0.001,"",    "",   "",    0.01,"",   "",  "",   0.1, "", "", "",0.5, "", "", "","", 1.0),
+                     breaks = c(0.001, 0.01, 0.1, 0.5, 1),
+                     labels = c("0.001", "0.01", "0.1", "0.5", "1.0"),
+                     minor_breaks = c(
+                       0.0025, 0.005, 0.0075,
+                       0.025, 0.05, 0.075,
+                       0.2, 0.3, 0.4,
+                       0.6, 0.7, 0.8, 0.9
+                     ),
                      name = " gnomAD Allele frequency (log10)",
-                     minor_breaks = NULL, # remove minor
+                     #minor_breaks = NULL, # remove minor
                      limits = c(0.001,1.0)
                       ) + # Format labels
   theme(panel.grid.major.y = element_line(color="black"), # Log-spaced major grid
@@ -351,6 +370,14 @@ p2 <-
     axis.title   = element_text(size = 24),
     axis.title.y = element_text(size = 24, margin = margin(r = 25)),
     axis.text    = element_text(size = 24),
+    panel.grid.major.y = element_line(
+      color = "grey80",
+      linewidth = 0.8
+    ),
+    panel.grid.minor.y = element_line(
+      color = "grey90",
+      linewidth = 0.35
+    ),
    ) + 
   # hide some things
   theme(legend.position = "none") +
